@@ -234,21 +234,21 @@ class ZFSDataset(object):
         parent_name, _, _ = self.name.rpartition('/')
         return open(parent_name, ssh=self.ssh) if parent_name else None
 
-    def filesystems(self):
-        return find(self.name, ssh=self.ssh, max_depth=1, types=['filesystem'])[1:]
+    def filesystems(self, max_depth=1):
+        return find(self.name, ssh=self.ssh, max_depth=max_depth, types=['filesystem'])[1:]
 
-    def volumes(self):
-        return find(self.name, ssh=self.ssh, max_depth=1, types=['volume'])
+    def volumes(self, max_depth=1):
+        return find(self.name, ssh=self.ssh, max_depth=max_depth, types=['volume'])
 
-    def snapshots(self):
-        return find(self.name, ssh=self.ssh, max_depth=1, types=['snapshot'])
+    def snapshots(self, max_depth=1):
+        return find(self.name, ssh=self.ssh, max_depth=max_depth, types=['snapshot'])
 
-    def children(self):
-        return find(self.name, ssh=self.ssh, max_depth=1, types=['all'])[1:]
+    def children(self, max_depth=1):
+        return find(self.name, ssh=self.ssh, max_depth=max_depth, types=['all'])[1:]
 
-    def clones(self):
+    def clones(self, max_depth=1):
         clones = []
-        for clone in [value['clones'][0] for (key, value) in findprops(self.name, ssh=self.ssh, props=['clones'], max_depth=1).items()]:
+        for clone in [value['clones'][0] for (key, value) in findprops(self.name, ssh=self.ssh, props=['clones'], max_depth=max_depth).items()]:
             if not (clone == '' or clone == '-'):
                 clones.extend(clone.split(','))
         
