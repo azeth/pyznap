@@ -249,7 +249,7 @@ class ZFSDataset(object):
     def clones(self):
         clones = []
         for clone in [value['clones'][0] for (key, value) in findprops(self.name, ssh=self.ssh, props=['clones'], max_depth=1).items()]:
-            if clone != '' and clone != '-':
+            if not (clone == '' or clone == '-'):
                 clones.extend(clone.split(','))
         
         return [open(clone, ssh=self.ssh) for clone in clones]
