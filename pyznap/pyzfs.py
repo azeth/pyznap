@@ -31,6 +31,8 @@ if exists('pv'):
 else:
     PV = None
 
+class OperationNotAllowedError(Exception):
+    pass
 
 def find(path=None, ssh=None, max_depth=None, types=[]):
     """Lists filesystems and snapshots for a given path"""
@@ -119,26 +121,45 @@ def roots(ssh=None):
     return find(ssh=ssh, max_depth=0)
 
 # note: force means create missing parent filesystems
-def create(name, ssh=None, type='filesystem', props={}, force=False):
+def create(name, ssh=None, type='filesystem', sparse=True, volsize=None, volblocksize='8k', recordsize='128k', props={}, force_parent=False):
     cmd = ['zfs', 'create']
 
     if type == 'volume':
-        raise NotImplementedError()
+        cmd.append('-V')
+        cmd.append(str(volsize))
+
+        if sparse:
+            cmd.append('-s')
+
     elif type != 'filesystem':
         raise ValueError('invalid type %s' % type)
 
-    if force:
+    if force_parent:
         cmd.append('-p')
 
     for prop, value in props.items():
         cmd.append('-o')
         cmd.append(prop + '=' + str(value))
 
+    if type == 'volume':
+        if volblocksize:
+            if not 'volblocksize' in props:
+                cmd.append('-o')
+                cmd.append('volblocksize' + '=' + str(volblocksize))
+    else:
+        if recordsize:
+            if not 'recordsize' in props:
+                cmd.append('-o')
+                cmd.append('recordsize' + '=' + str(recordsize))
+
     cmd.append(name)
 
     check_output(cmd, ssh=ssh)
 
-    return ZFSFilesystem(name, ssh=ssh)
+    if type == 'volume':
+        return ZFSVolume(name, ssh=ssh)
+    else:
+        return ZFSFilesystem(name, ssh=ssh)
 
 
 def receive(name, stdin, ssh=None, ssh_source=None, append_name=False, append_path=False,
@@ -216,6 +237,9 @@ class ZFSDataset(object):
     def filesystems(self):
         return find(self.name, ssh=self.ssh, max_depth=1, types=['filesystem'])[1:]
 
+    def volumes(self):
+        return find(self.name, ssh=self.ssh, max_depth=1, types=['volume'])
+
     def snapshots(self):
         return find(self.name, ssh=self.ssh, max_depth=1, types=['snapshot'])
 
@@ -228,18 +252,22 @@ class ZFSDataset(object):
     def dependents(self):
         raise NotImplementedError()
 
-    # TODO: split force to allow -f, -r and -R to be specified individually
-    # TODO: remove or ignore defer option for non-snapshot datasets
-    def destroy(self, defer=False, force=False):
+    def destroy(self, defer=False, children=False, dependents=False, force_unmount=False):
         cmd = ['zfs', 'destroy']
 
         cmd.append('-v')
 
-        if defer:
-            cmd.append('-d')
+        if isinstance(self, ZFSSnapshot):
+            if defer:
+                cmd.append('-d')
+        else:
+            if force_unmount:
+                cmd.append('-f')
 
-        if force:
-            cmd.append('-f')
+        if children:
+            cmd.append('-r')
+
+        if dependents:
             cmd.append('-R')
 
         cmd.append(self.name)
@@ -263,15 +291,54 @@ class ZFSDataset(object):
         return ZFSSnapshot(name, ssh=self.ssh)
 
     # TODO: split force to allow -f, -r and -R to be specified individually
-    def rollback(self, snapname, force=False):
-        raise NotImplementedError()
+    def rollback(self, snapname, destroy_newer=False, destroy_clones=False, force_unmount=False):
+        cmd = ['zfs', 'rollback']
+        
+        if destroy_newer:
+            cmd.append('-r')
+        if destroy_clones:
+            cmd.append('-R')
+        if force_unmount:
+            cmd.append('-f')
+
+        snap = str(snapname).split('@')
+        if len(snap) == 1:
+            snap.insert(0, self.name)
+        
+        cmd.append('@'.join(snap))
+
+        check_output(cmd, ssh=self.ssh)
+
+    def origin(self):
+        origin = self.getpropval('origin')
+        if origin:
+            return open(origin, ssh=self.ssh)
 
     def promote(self):
-        raise NotImplementedError()
+        if self.origin() == None:
+            return
+
+        cmd = ['zfs', 'promote']
+        cmd.append(self.name)
+
+        check_output(cmd, ssh=self.ssh)
 
     # TODO: split force to allow -f and -p to be specified individually
-    def rename(self, name, recursive=False, force=False):
-        raise NotImplementedError()
+    def rename(self, name, recursive=False, force_parent=False, force_unmount=False):
+        cmd = ['zfs', 'rename']
+
+        if not isinstance(self, ZFSSnapshot):
+            if force_parent:
+                cmd.append('-p')
+
+        if force_unmount:
+            cmd.append('-f')
+
+        cmd.append(self.name)
+        cmd.append(name)
+
+        check_output(cmd, ssh=self.ssh)
+        return open(name, ssh=self.ssh)
 
     def getprops(self):
         return findprops(self.name, ssh=self.ssh, max_depth=0)[self.name]
@@ -280,7 +347,7 @@ class ZFSDataset(object):
         return findprops(self.name, ssh=self.ssh, max_depth=0, props=[prop])[self.name].get(prop, None)
 
     def getpropval(self, prop, default=None):
-        value = self.getprop(prop)['value']
+        value = self.getprop(prop)[0]
         return default if value == '-' else value
 
     def setprop(self, prop, value):
@@ -302,31 +369,14 @@ class ZFSDataset(object):
 
         check_output(cmd, ssh=self.ssh)
 
-    def userspace(self, *args, **kwargs):
-        raise NotImplementedError()
-
-    def groupspace(self, *args, **kwargs):
-        raise NotImplementedError()
-
-    def share(self, *args, **kwargs):
-        raise NotImplementedError()
-
-    def unshare(self, *args, **kwargs):
-        raise NotImplementedError()
-
-    def allow(self, *args, **kwargs):
-        raise NotImplementedError()
-
-    def unallow(self, *args, **kwargs):
-        raise NotImplementedError()
-
 class ZFSVolume(ZFSDataset):
-    pass
+    def filesystems(self, *args, **kwargs):
+        raise OperationNotAllowedError()
+
+    def volumes(self, *args, **kwargs):
+        raise OperationNotAllowedError()
 
 class ZFSFilesystem(ZFSDataset):
-    def upgrade(self, *args, **kwargs):
-        raise NotImplementedError()
-
     def mount(self, *args, **kwargs):
         raise NotImplementedError()
 
@@ -342,9 +392,35 @@ class ZFSSnapshot(ZFSDataset):
         parent_path = self.name.split('@')[0]
         return open(name=parent_path, ssh=self.ssh)
 
+    def snapshots(self, *args, **kwargs):
+        raise OperationNotAllowedError()
+
+    def snapshot(self, *args, **kwargs):
+        raise OperationNotAllowedError()
+
     # note: force means create missing parent filesystems
-    def clone(self, name, props={}, force=False):
-        raise NotImplementedError()
+    def clone(self, name, props={}, force_parent=False):
+        cmd = ['zfs', 'clone']
+
+        if force_parent:
+            cmd.append('-p')
+        
+        for prop, value in props.items():
+            cmd.append('-o')
+            cmd.append(prop + '=' + str(value))
+
+        cmd.append(self.name)
+        cmd.append(name)
+
+        check_output(cmd, ssh=self.ssh)
+
+    def clones(self):
+        clones = self.getpropval('clones').split(',')
+
+        if clones == '':
+            return []
+        else:
+            return [open(name=clone_path, ssh=self.ssh) for clone_path in clones]
 
     def send(self, ssh_dest=None, base=None, intermediates=False, replicate=False,
              properties=False, deduplicate=False, raw=False):
