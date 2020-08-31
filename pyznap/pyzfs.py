@@ -425,7 +425,7 @@ class ZFSSnapshot(ZFSDataset):
         if clones == '':
             return []
         else:
-            return [open(name=clone_path, ssh=self.ssh) for clone_path in clones]
+            return [open(name=clone, ssh=self.ssh) for clone in clones]
 
     def send(self, ssh_dest=None, base=None, intermediates=False, replicate=False,
              properties=False, deduplicate=False, raw=False):
