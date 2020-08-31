@@ -228,11 +228,17 @@ class ZFSDataset(object):
 
     def __repr__(self):
         name = self.__str__()
-        return '{0}({1!r})'.format(self.__class__.__name__, name)
+        return '{0}({1!r})#{2}'.format(self.__class__.__name__, name, self.guid())
+
+    def __eq__(self, value):
+        return self.guid() == value.guid()
 
     def parent(self):
         parent_name, _, _ = self.name.rpartition('/')
         return open(parent_name, ssh=self.ssh) if parent_name else None
+
+    def guid(self):
+        return self.getpropval('guid')
 
     def filesystems(self, max_depth=1):
         return find(self.name, ssh=self.ssh, max_depth=max_depth, types=['filesystem'])[1:]
@@ -340,10 +346,17 @@ class ZFSDataset(object):
             cmd.append('-f')
 
         cmd.append(self.name)
-        cmd.append(name)
+
+        target = ''
+        if not isinstance(self, ZFSSnapshot):
+            target = name
+        else:
+            target = self.name.split('@')[0] + '@' + name
+
+        cmd.append(target)
 
         check_output(cmd, ssh=self.ssh)
-        return open(name, ssh=self.ssh)
+        return open(target, ssh=self.ssh)
 
     def getprops(self):
         return findprops(self.name, ssh=self.ssh, max_depth=0)[self.name]
