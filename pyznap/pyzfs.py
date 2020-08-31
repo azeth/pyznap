@@ -247,7 +247,12 @@ class ZFSDataset(object):
         return find(self.name, ssh=self.ssh, max_depth=1, types=['all'])[1:]
 
     def clones(self):
-        raise NotImplementedError()
+        clones = []
+        for clone in [value['clones'][0] for (key, value) in findprops(self.name, ssh=self.ssh, props=['clones'], max_depth=1).items()]:
+            if clone != '' and clone != '-':
+                clones.extend(clone.split(','))
+        
+        return [open(clone, ssh=self.ssh) for clone in clones]
 
     def dependents(self):
         raise NotImplementedError()
